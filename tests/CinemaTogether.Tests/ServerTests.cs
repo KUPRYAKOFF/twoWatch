@@ -80,4 +80,37 @@ public sealed class ServerTests : IAsyncLifetime
         var library = app.Services.GetRequiredService<MediaLibrary>(); var duplicate = await library.AddAsync(media with { Id = "another" }); Assert.Equal(media.Id, duplicate.Id); Assert.Single(await library.ListAsync());
         await library.RecordHistoryAsync(media); Assert.Equal("Demo", Assert.Single(await library.HistoryAsync()).Title);
     }
+
+    [Fact] public async Task HttpsProxyLoginUsesSecureCookieAndKeepsOriginProtection()
+    {
+        var (client, _) = Client(); using (client)
+        {
+            using var request = new HttpRequestMessage(HttpMethod.Post, "/api/auth/join")
+                { Content = JsonContent.Create(new { name = "Friend", password = "secret1" }) };
+            request.Headers.Add("X-Forwarded-Proto", "https"); request.Headers.Add("X-Forwarded-Host", "cinema.example");
+            request.Headers.Add("X-Forwarded-For", "203.0.113.42"); request.Headers.Add("Origin", "https://cinema.example");
+            using var response = await client.SendAsync(request); response.EnsureSuccessStatusCode();
+            var cookie = Assert.Single(response.Headers.GetValues("Set-Cookie"));
+            Assert.Contains("secure", cookie, StringComparison.OrdinalIgnoreCase);
+            Assert.Contains("httponly", cookie, StringComparison.OrdinalIgnoreCase);
+            using var foreign = new HttpRequestMessage(HttpMethod.Post, "/api/auth/join")
+                { Content = JsonContent.Create(new { name = "Friend", password = "secret1" }) };
+            foreign.Headers.Add("X-Forwarded-Proto", "https"); foreign.Headers.Add("X-Forwarded-Host", "cinema.example");
+            foreign.Headers.Add("Origin", "https://attacker.example");
+            Assert.Equal(HttpStatusCode.Forbidden, (await client.SendAsync(foreign)).StatusCode);
+        }
+    }
+
+    [Theory]
+    [InlineData("X-Forwarded-Proto", "https")]
+    [InlineData("X-Forwarded-For", "127.0.0.1")]
+    public async Task ProxyCannotUseOrganizerBootstrapEvenWithKnownSecret(string header, string value)
+    {
+        var (client, _) = Client(); using (client)
+        {
+            using var request = new HttpRequestMessage(HttpMethod.Post, "/api/auth/host");
+            request.Headers.Authorization = new("Bearer", secret); request.Headers.Add(header, value);
+            Assert.Equal(HttpStatusCode.Unauthorized, (await client.SendAsync(request)).StatusCode);
+        }
+    }
 }

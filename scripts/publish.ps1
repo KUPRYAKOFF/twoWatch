@@ -9,6 +9,10 @@ try {
     dotnet publish src/CinemaTogether.Desktop -c Release -r win-x64 --self-contained true -p:PublishSingleFile=false -o $OutputDirectory
     if ($LASTEXITCODE -ne 0) { throw "dotnet publish failed" }
     Copy-Item README.md, THIRD-PARTY-NOTICES.md $OutputDirectory
+    $version = ([xml](Get-Content Directory.Build.props -Raw)).Project.PropertyGroup.Version
+    $commit = git rev-parse HEAD
+    @("Cinema Together $version", "Commit: $commit", "Runtime: win-x64", "Self-contained: true") |
+        Set-Content (Join-Path $OutputDirectory "BUILD-INFO.txt") -Encoding utf8
     if ($IncludeFFmpeg) {
         $archive = Join-Path $projectRoot "artifacts/ffmpeg-9.1-essentials_build.zip"
         $expectedHash = "B9BBBB3ACECE000CBEEC994F856649354E52C773807841E78908374B24D658FD"

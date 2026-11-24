@@ -63,13 +63,13 @@ public static class ServerHost
                 _ => new FixedWindowRateLimiterOptions { PermitLimit = 12, Window = TimeSpan.FromMinutes(1), QueueLimit = 0 }));
         });
         var app = builder.Build();
+        app.UseLocalProxyHeaders();
         app.Use(async (context, next) =>
         {
             context.Response.Headers.XContentTypeOptions = "nosniff";
             context.Response.Headers["Referrer-Policy"] = "no-referrer";
             context.Response.Headers["Content-Security-Policy"] = "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; media-src 'self' blob:; connect-src 'self' ws: wss:; object-src 'none'; frame-ancestors 'self'; base-uri 'self'";
-            if (context.Request.Headers.Origin is { Count: > 0 } origin &&
-                (!Uri.TryCreate(origin.ToString(), UriKind.Absolute, out var uri) || uri.Authority != context.Request.Host.Value || uri.Scheme != context.Request.Scheme))
+            if (!LocalProxyHeaders.HasSameOrigin(context.Request))
             { context.Response.StatusCode = 403; return; }
             try { await next(); }
             catch (Exception ex) when (ex is ArgumentException or InvalidOperationException or FileNotFoundException or IOException or System.ComponentModel.Win32Exception)
@@ -106,7 +106,7 @@ public static class ServerHost
         app.MapPost("/api/auth/host", (HttpContext context, SessionStore sessions) =>
         {
             var supplied = context.Request.Headers.Authorization.ToString();
-            if (context.Connection.RemoteIpAddress is not { } remote || !IPAddress.IsLoopback(remote) ||
+            if (!LocalProxyHeaders.IsLocalOrganizerRequest(context, settings.Port) ||
                 !CryptographicOperations.FixedTimeEquals(Encoding.UTF8.GetBytes(supplied), Encoding.UTF8.GetBytes("Bearer " + hostSecret)))
                 return Results.Unauthorized();
             var session = sessions.Create("Организатор", true); SetCookie(context, session); return Results.Ok();

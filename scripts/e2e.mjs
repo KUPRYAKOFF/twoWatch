@@ -6,10 +6,12 @@ import { existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import net from "node:net";
+import { startHttpsProxy } from "./https-proxy.mjs";
 
 const dotnet = process.env.DOTNET_COMMAND || "dotnet";
 const scratch = await mkdtemp(join(tmpdir(), "cinema-e2e-"));
-const output = resolve("artifacts/e2e");
+const viaProxy = process.env.CINEMA_HTTPS_PROXY === "1";
+const output = resolve("artifacts/e2e", viaProxy ? "https-proxy" : "direct");
 await mkdir(output, { recursive: true });
 const probe = net.createServer();
 await new Promise((r) => probe.listen(0, "127.0.0.1", r));
@@ -61,7 +63,7 @@ const child = spawn(
 let log = "";
 child.stdout.on("data", (d) => (log += d));
 child.stderr.on("data", (d) => (log += d));
-let browser;
+let browser, proxy;
 const observedPages = [];
 const pause = (ms) => new Promise((r) => setTimeout(r, ms));
 async function until(action, description, timeout = 20000) {
@@ -83,6 +85,8 @@ try {
     async () => (await fetch(origin + "/api/health")).ok,
     "Server did not start",
   );
+  if (viaProxy) proxy = await startHttpsProxy(port, scratch);
+  const viewerOrigin = proxy?.origin || origin;
   browser = await chromium.launch({
     executablePath:
       process.env.CHROMIUM_PATH ||
@@ -100,6 +104,7 @@ try {
     }),
     viewerContext = await browser.newContext({
       viewport: { width: 1280, height: 900 },
+      ignoreHTTPSErrors: viaProxy,
     });
   const host = await hostContext.newPage(),
     viewer = await viewerContext.newPage();
@@ -126,12 +131,44 @@ try {
         console.error("Browser:", message.text());
     });
   }
-  await viewer.goto(origin);
+  await viewer.goto(viewerOrigin);
   await viewer.screenshot({ path: join(output, "login.png"), fullPage: true });
   await viewer.locator("#name").fill("Друг");
   await viewer.locator("#password").fill("secret1");
   await viewer.locator("#join-button").click();
   await viewer.locator("#app").waitFor({ state: "visible" });
+  if (viaProxy) {
+    const cookie = (await viewerContext.cookies(viewerOrigin)).find(
+      (cookie) => cookie.name === "cinema.session",
+    );
+    assert.ok(
+      cookie?.secure && cookie?.httpOnly,
+      "HTTPS tunnel must set a Secure HttpOnly session",
+    );
+    const bootstrap = await viewerContext.request.post(
+      viewerOrigin + "/api/auth/host",
+      {
+        headers: { Authorization: "Bearer " + "e".repeat(64) },
+      },
+    );
+    assert.equal(
+      bootstrap.status(),
+      401,
+      "Tunnel must not expose organizer bootstrap",
+    );
+    const foreign = await viewerContext.request.post(
+      viewerOrigin + "/api/auth/join",
+      {
+        headers: { Origin: "https://attacker.example" },
+        data: { name: "Friend", password: "secret1" },
+      },
+    );
+    assert.equal(
+      foreign.status(),
+      403,
+      "Tunnel must preserve cross-origin protection",
+    );
+  }
   await host.goto(origin + "/#host=" + "e".repeat(64));
   await host.locator("#app").waitFor({ state: "visible" });
   await host.locator("#featured .poster button").first().click();
@@ -141,6 +178,24 @@ try {
       (await viewer.locator("#video").evaluate((v) => v.readyState >= 3)),
     "Both players should buffer",
   );
+  if (viaProxy) {
+    const mediaId = await viewer.evaluate(() => currentId);
+    const range = await viewerContext.request.get(
+      viewerOrigin + "/api/stream/" + mediaId,
+      {
+        headers: { Range: "bytes=100-199" },
+      },
+    );
+    assert.equal(range.status(), 206);
+    assert.equal((await range.body()).length, 100);
+    assert.ok(
+      range.headers()["content-range"].startsWith("bytes 100-199/"),
+    );
+    await until(
+      () => proxy.webSocketConnections > 0,
+      "SignalR must connect through the WebSocket proxy",
+    );
+  }
   await until(
     () =>
       host
@@ -253,7 +308,9 @@ try {
   await host.getByRole("button", { name: "Отключить", exact: true }).click();
   await until(
     async () =>
-      (await viewerContext.request.get(origin + "/api/state")).status() === 401,
+      (
+        await viewerContext.request.get(viewerOrigin + "/api/state")
+      ).status() === 401,
     "Kick should revoke HTTP access",
   );
   assert.deepEqual(errors, []);
@@ -263,6 +320,10 @@ try {
         ? ""
         : " WebRTC voice/mute passed."),
   );
+  if (viaProxy)
+    console.log(
+      "PASS: HTTPS proxy login, Secure cookie, origin protection, local organizer isolation, HTTP Range, WebSockets, playback and reconnect.",
+    );
 } catch (error) {
   for (const page of observedPages) {
     console.error(
@@ -290,6 +351,7 @@ try {
   throw error;
 } finally {
   await browser?.close();
+  await proxy?.close();
   child.kill("SIGTERM");
   await Promise.race([new Promise((r) => child.once("exit", r)), pause(5000)]);
   if (child.exitCode === null) child.kill("SIGKILL");
