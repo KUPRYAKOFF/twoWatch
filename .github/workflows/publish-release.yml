@@ -1,0 +1,78 @@
+name: Publish verified Windows release
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing draft release tag (for example v1.0.1)
+        required: true
+        type: string
+      build_run_id:
+        description: Successful Build and test run containing the Windows artifact
+        required: true
+        type: string
+      target_sha:
+        description: Exact commit built and tested by that run
+        required: true
+        type: string
+permissions:
+  contents: write
+  actions: read
+jobs:
+  publish:
+    runs-on: ubuntu-24.04
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      RELEASE_TAG: ${{ inputs.tag }}
+      BUILD_RUN_ID: ${{ inputs.build_run_id }}
+      TARGET_SHA: ${{ inputs.target_sha }}
+      RELEASE_DIRECTORY: ${{ runner.temp }}/cinema-release
+    steps:
+      - name: Verify build and draft release
+        run: |
+          python3 - <<'PY'
+          import json, os, re, subprocess
+          tag, run_id, sha = (os.environ[k] for k in ('RELEASE_TAG', 'BUILD_RUN_ID', 'TARGET_SHA'))
+          assert re.fullmatch(r'v\d+\.\d+\.\d+', tag), 'Invalid version tag'
+          assert run_id.isdecimal() and re.fullmatch(r'[0-9a-f]{40}', sha), 'Invalid build reference'
+          repo = os.environ['GH_REPO']
+          run = json.loads(subprocess.check_output(['gh', 'api', f'repos/{repo}/actions/runs/{run_id}']))
+          assert run['status'] == 'completed' and run['conclusion'] == 'success', 'Build must pass all checks'
+          assert run['head_sha'] == sha and run['path'] == '.github/workflows/build.yml', 'Wrong build or commit'
+          draft = json.loads(subprocess.check_output(['gh', 'release', 'view', tag, '--repo', repo,
+              '--json', 'isDraft,targetCommitish']))
+          assert draft['isDraft'] and draft['targetCommitish'] == sha, 'Release must be a matching draft'
+          print(f'Verified {tag}: successful build {run_id}, commit {sha}')
+          PY
+      - uses: actions/download-artifact@v4
+        with:
+          name: CinemaTogether-win-x64
+          run-id: ${{ inputs.build_run_id }}
+          github-token: ${{ github.token }}
+          path: ${{ runner.temp }}/cinema-release
+      - name: Verify and name the portable package
+        run: |
+          python3 - <<'PY'
+          import hashlib, os, pathlib, zipfile
+          root = pathlib.Path(os.environ['RELEASE_DIRECTORY'])
+          version, sha = os.environ['RELEASE_TAG'][1:], os.environ['TARGET_SHA']
+          package = root / 'CinemaTogether-win-x64.zip'
+          with zipfile.ZipFile(package) as z:
+              assert z.testzip() is None, 'Corrupt portable archive'
+              names = {n.replace('\\', '/'): n for n in z.namelist()}
+              required = {'CinemaTogether.exe', 'wwwroot/index.html', 'tools/ffmpeg.exe',
+                  'tools/ffprobe.exe', 'BUILD-INFO.txt', 'README.md', 'THIRD-PARTY-NOTICES.md'}
+              assert required.issubset(names), 'Incomplete portable archive'
+              info = z.read(names['BUILD-INFO.txt']).decode('utf-8-sig')
+              assert f'Cinema Together {version}' in info and f'Commit: {sha}' in info, 'Wrong binary version'
+          asset = package.rename(root / f'CinemaTogether-{version}-win-x64.zip')
+          with asset.open('rb') as stream:
+              digest = hashlib.file_digest(stream, 'sha256').hexdigest()
+          (root / 'SHA256SUMS.txt').write_text(f'{digest}  {asset.name}\n')
+          print(f'Verified {asset.name}: SHA256 {digest}')
+          PY
+      - name: Upload assets and publish the prepared draft
+        run: |
+          gh release upload "$RELEASE_TAG" "$RELEASE_DIRECTORY/CinemaTogether-${RELEASE_TAG#v}-win-x64.zip" "$RELEASE_DIRECTORY/SHA256SUMS.txt" --repo "$GH_REPO" --clobber
+          gh release edit "$RELEASE_TAG" --repo "$GH_REPO" --draft=false --latest
+          gh release view "$RELEASE_TAG" --repo "$GH_REPO" --json url --jq .url
