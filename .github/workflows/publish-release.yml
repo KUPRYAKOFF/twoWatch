@@ -21,12 +21,12 @@ jobs:
   publish:
     runs-on: ubuntu-24.04
     env:
-      GH_TOKEN: ${{ github.token }}
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       GH_REPO: ${{ github.repository }}
       RELEASE_TAG: ${{ inputs.tag }}
       BUILD_RUN_ID: ${{ inputs.build_run_id }}
       TARGET_SHA: ${{ inputs.target_sha }}
-      RELEASE_DIRECTORY: ${{ runner.temp }}/cinema-release
+      RELEASE_DIRECTORY: release-artifact
     steps:
       - name: Verify build and draft release
         run: |
@@ -48,8 +48,8 @@ jobs:
         with:
           name: CinemaTogether-win-x64
           run-id: ${{ inputs.build_run_id }}
-          github-token: ${{ github.token }}
-          path: ${{ runner.temp }}/cinema-release
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          path: release-artifact
       - name: Verify and name the portable package
         run: |
           python3 - <<'PY'
