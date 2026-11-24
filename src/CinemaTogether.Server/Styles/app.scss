@@ -1100,3 +1100,9 @@ h2 {
     font-size: 9px;
   }
 }
+#preparation-progress {
+  width: min(75%, 300px);
+  height: 7px;
+  margin: 12px 0;
+  accent-color: $accent;
+}

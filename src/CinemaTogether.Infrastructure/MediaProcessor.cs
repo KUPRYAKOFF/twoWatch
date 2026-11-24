@@ -8,7 +8,8 @@ using CinemaTogether.Core;
 
 namespace CinemaTogether.Infrastructure;
 
-public sealed record ConversionStatus(string Id, string State, string? Error);
+public sealed record ConversionStatus(string Id, string State, string? Error, double? Percent = null,
+    double? Speed = null, long? RemainingSeconds = null, bool CopyVideo = false);
 
 public sealed class MediaProcessor(AppSettings settings, string directory, Action<Exception>? onError = null) : IAsyncDisposable
 {
@@ -20,13 +21,27 @@ public sealed class MediaProcessor(AppSettings settings, string directory, Actio
     private readonly CancellationTokenSource shutdown = new();
     private readonly string cache = Path.Combine(directory, "cache");
 
-    public static async Task<string> RunAsync(string executable, IEnumerable<string> arguments, CancellationToken cancellation = default)
+    public static async Task<string> RunAsync(string executable, IEnumerable<string> arguments, CancellationToken cancellation = default,
+        Action<string>? onOutputLine = null)
     {
-        var start = new ProcessStartInfo(executable) { UseShellExecute = false, CreateNoWindow = true, RedirectStandardOutput = true, RedirectStandardError = true };
+        executable = MediaToolPaths.ResolveExecutable(executable);
+        var start = new ProcessStartInfo(executable) { UseShellExecute = false, CreateNoWindow = true, RedirectStandardOutput = true, RedirectStandardError = true, WorkingDirectory = AppContext.BaseDirectory };
         foreach (var argument in arguments) start.ArgumentList.Add(argument);
-        using var process = Process.Start(start) ?? throw new IOException("Не удалось запустить " + executable);
+        Process started;
+        try { started = Process.Start(start) ?? throw new IOException("Не удалось запустить " + executable); }
+        catch (System.ComponentModel.Win32Exception ex) when (ex.NativeErrorCode is 2 or 3)
+        {
+            throw new FileNotFoundException($"Не найден {Path.GetFileName(executable)}. Распакуйте архив приложения целиком, включая папку tools, или исправьте путь в «Настройках».", executable, ex);
+        }
+        using var process = started;
         using var registration = cancellation.Register(() => { try { process.Kill(true); } catch (InvalidOperationException) { } });
-        var output = process.StandardOutput.ReadToEndAsync(cancellation);
+        async Task<string> ReadOutput()
+        {
+            if (onOutputLine is null) return await process.StandardOutput.ReadToEndAsync(cancellation);
+            while (await process.StandardOutput.ReadLineAsync(cancellation) is { } line) onOutputLine(line);
+            return "";
+        }
+        var output = ReadOutput();
         var error = process.StandardError.ReadToEndAsync(cancellation);
         await process.WaitForExitAsync(cancellation);
         var errorText = await error;
@@ -77,7 +92,8 @@ public sealed class MediaProcessor(AppSettings settings, string directory, Actio
         {
             if (!jobs.ContainsKey(key) && jobs.Values.Count(j => j.State is "queued" or "converting") >= 4)
                 throw new InvalidOperationException("Очередь преобразования заполнена. Дождитесь завершения текущих задач.");
-            var status = jobs.GetOrAdd(key, _ => new(key, File.Exists(CachePath(key)) ? "ready" : "queued", null));
+            var status = jobs.GetOrAdd(key, _ => new(key, File.Exists(CachePath(key)) ? "ready" : "queued", null,
+                CopyVideo: quality == "original" && item.VideoCodec == "h264"));
             if (status.State == "queued") _ = tasks.GetOrAdd(key, _ => new Lazy<Task>(() => ConvertAsync(key, item, quality, audio))).Value;
             return jobs[key];
         }
@@ -93,7 +109,8 @@ public sealed class MediaProcessor(AppSettings settings, string directory, Actio
         try
         {
             await encoderLock.WaitAsync(shutdown.Token); acquired = true;
-            jobs[key] = new(key, "converting", null);
+            var copyVideo = quality == "original" && item.VideoCodec == "h264";
+            jobs[key] = new(key, "converting", null, 0, CopyVideo: copyVideo);
             // Bound persisted cache before a new conversion. Never expose partial files.
             var files = new DirectoryInfo(cache).GetFiles("*.mp4").Where(f => !f.Name.Contains(".partial.")).OrderBy(f => f.LastWriteTimeUtc).ToList();
             var total = files.Sum(f => f.Length);
@@ -104,7 +121,7 @@ public sealed class MediaProcessor(AppSettings settings, string directory, Actio
             }
             async Task Encode(string encoder)
             {
-                List<string> args = ["-nostdin", "-hide_banner", "-loglevel", "error", "-y", "-i", item.Path, "-map", "0:v:0", "-map", audio.HasValue ? $"0:{audio}" : "0:a:0?"];
+                List<string> args = ["-nostdin", "-hide_banner", "-loglevel", "error", "-nostats", "-progress", "pipe:1", "-y", "-i", item.Path, "-map", "0:v:0", "-map", audio.HasValue ? $"0:{audio}" : "0:a:0?"];
                 if (quality == "original" && item.VideoCodec == "h264") args.AddRange(["-c:v", "copy"]);
                 else
                 {
@@ -112,15 +129,34 @@ public sealed class MediaProcessor(AppSettings settings, string directory, Actio
                     if (encoder == "libx264") args.AddRange(["-preset", "veryfast", "-crf", "21", "-threads", "2"]);
                     if (quality != "original") args.AddRange(["-vf", $"scale=-2:'min({quality},ih)'"]);
                 }
-                args.AddRange(["-c:a", "aac", "-b:a", "192k", "-movflags", "+faststart", temporary]);
-                await RunAsync(settings.FfmpegPath, args, shutdown.Token);
+                var audioCodec = audio.HasValue ? item.Tracks.First(t => t.Type == "audio" && t.Index == audio.Value).Codec : item.AudioCodec;
+                if (audioCodec is "aac" or "mp3") args.AddRange(["-c:a", "copy"]);
+                else args.AddRange(["-c:a", "aac", "-b:a", "192k"]);
+                args.AddRange(["-movflags", "+faststart", temporary]);
+                double seconds = 0;
+                double? speed = null;
+                await RunAsync(settings.FfmpegPath, args, shutdown.Token, line =>
+                {
+                    if (line.StartsWith("out_time_us=", StringComparison.Ordinal)
+                        && double.TryParse(line[12..], CultureInfo.InvariantCulture, out var micros) && double.IsFinite(micros))
+                        seconds = Math.Max(0, micros / 1_000_000d);
+                    else if (line.StartsWith("speed=", StringComparison.Ordinal))
+                        speed = double.TryParse(line[6..].Trim().TrimEnd('x'), CultureInfo.InvariantCulture, out var rate)
+                            && double.IsFinite(rate) && rate > 0 ? rate : null;
+                    else if (line.StartsWith("progress=", StringComparison.Ordinal))
+                    {
+                        var remaining = speed is > 0 ? Math.Ceiling(Math.Max(0, item.Duration - seconds) / speed.Value) : double.NaN;
+                        jobs[key] = new(key, "converting", null, Math.Clamp(seconds / item.Duration * 100, 0, 99.9), speed,
+                            double.IsFinite(remaining) && remaining < long.MaxValue ? (long)remaining : null, copyVideo);
+                    }
+                });
             }
             var encoder = settings.HardwareEncoder;
             if (encoder is not ("libx264" or "h264_nvenc" or "h264_qsv" or "h264_amf")) encoder = "libx264";
             try { await Encode(encoder); }
             catch (IOException) when (encoder != "libx264") { await Encode("libx264"); }
             File.Move(temporary, CachePath(key), true);
-            jobs[key] = new(key, "ready", null);
+            jobs[key] = new(key, "ready", null, 100, CopyVideo: copyVideo);
         }
         catch (Exception ex) when (ex is IOException or OperationCanceledException or System.ComponentModel.Win32Exception)
         {

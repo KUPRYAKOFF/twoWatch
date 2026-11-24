@@ -1,7 +1,7 @@
 {
   "name": "cinema-together-client",
   "private": true,
-  "version": "1.0.1",
+  "version": "1.0.2",
   "scripts": {
     "build": "sass --no-source-map src/CinemaTogether.Server/Styles/app.scss src/CinemaTogether.Server/wwwroot/app.css && node scripts/vendor.mjs",
     "test:e2e": "node scripts/e2e.mjs"

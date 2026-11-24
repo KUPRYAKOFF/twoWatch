@@ -80,6 +80,7 @@ function canControl() {
   return online && !!p && (p.isHost || p.canControl);
 }
 function overlay(title, text, unlock = false) {
+  $("preparation-progress").hidden = true;
   $("player-overlay").hidden = false;
   $("overlay-title").textContent = title;
   $("overlay-text").textContent = text;
@@ -367,12 +368,31 @@ async function loadSource(item, generation = ++loadGeneration, force = false) {
       while (status.state !== "ready") {
         if (generation !== loadGeneration) return;
         if (status.state === "failed") throw new Error(status.error);
+        const percent = Number.isFinite(status.percent) ? status.percent : null;
+        const eta =
+          Number.isFinite(status.remainingSeconds) && percent < 99
+            ? ` Примерно осталось ${duration(status.remainingSeconds)}.`
+            : "";
         overlay(
           status.state === "queued"
             ? "Видео в очереди на подготовку"
-            : "Готовим видео для браузера",
-          "После подготовки просмотр начнётся синхронно у всех.",
+            : percent >= 99
+              ? "Завершаем подготовку файла"
+              : percent === null
+                ? "Готовим видео для браузера"
+                : `Подготовка видео · ${percent.toLocaleString("ru-RU", { maximumFractionDigits: 1 })}%`,
+          status.state === "queued"
+            ? "Ожидаем завершения другой подготовки."
+            : (status.copyVideo
+                ? "Копируем видео без перекодирования и готовим звук."
+                : "Преобразуем видео для браузера.") + eta,
         );
+        if (status.state === "converting") {
+          $("preparation-progress").hidden = false;
+          if (percent === null)
+            $("preparation-progress").removeAttribute("value");
+          else $("preparation-progress").value = percent;
+        }
         await sleep(1500);
         if (generation !== loadGeneration) return;
         status = await api("/api/conversions/" + status.id);

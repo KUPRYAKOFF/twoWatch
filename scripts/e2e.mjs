@@ -188,9 +188,7 @@ try {
     );
     assert.equal(range.status(), 206);
     assert.equal((await range.body()).length, 100);
-    assert.ok(
-      range.headers()["content-range"].startsWith("bytes 100-199/"),
-    );
+    assert.ok(range.headers()["content-range"].startsWith("bytes 100-199/"));
     await until(
       () => proxy.webSocketConnections > 0,
       "SignalR must connect through the WebSocket proxy",
@@ -205,6 +203,38 @@ try {
     "Room should become ready",
   );
   assert.equal(await viewer.locator("#play").isDisabled(), true);
+  // Exercise the visible progress contract without depending on conversion speed
+  // or requiring H.264 decoding support in the test Chromium distribution.
+  const progress = {
+    id: "progress-check",
+    state: "converting",
+    error: null,
+    percent: 45.5,
+    remainingSeconds: 90,
+    copyVideo: true,
+  };
+  await host.route("**/api/prepare/*", (route) =>
+    route.fulfill({ json: progress }),
+  );
+  await host.route("**/api/conversions/progress-check", (route) =>
+    route.fulfill({ json: progress }),
+  );
+  await host.locator("#quality").selectOption("720");
+  await host.locator("#preparation-progress").waitFor({ state: "visible" });
+  assert.equal(
+    await host.locator("#preparation-progress").getAttribute("value"),
+    "45.5",
+  );
+  assert.ok(
+    (await host.locator("#overlay-text").textContent()).includes("1:30"),
+  );
+  await host.locator("#quality").selectOption("original");
+  await until(
+    () => host.locator("#video").evaluate((video) => video.readyState >= 3),
+    "Original video should resume after cancelling preparation",
+  );
+  await host.unroute("**/api/prepare/*");
+  await host.unroute("**/api/conversions/progress-check");
   await host.locator("#play").click();
   await until(
     async () =>

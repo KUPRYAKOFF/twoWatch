@@ -21,7 +21,8 @@ namespace CinemaTogether.Desktop;
 
 public partial class MainWindow : Window
 {
-    private readonly string dataDirectory = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "CinemaTogether");
+    private readonly string dataDirectory = Environment.GetEnvironmentVariable("CINEMA_DATA_DIR")
+        ?? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "CinemaTogether");
     private readonly SettingsStore store;
     private readonly MediaLibrary library;
     private readonly ObservableCollection<MediaItem> media = [];
@@ -45,9 +46,11 @@ public partial class MainWindow : Window
     private async void Window_Loaded(object sender, RoutedEventArgs e) => await Guard(async () =>
     {
         settings = await store.LoadAsync(); await library.InitializeAsync();
-        var bundled = Path.Combine(AppContext.BaseDirectory, "tools");
-        if (settings.FfmpegPath == "ffmpeg" && File.Exists(Path.Combine(bundled, "ffmpeg.exe"))) settings.FfmpegPath = Path.Combine(bundled, "ffmpeg.exe");
-        if (settings.FfprobePath == "ffprobe" && File.Exists(Path.Combine(bundled, "ffprobe.exe"))) settings.FfprobePath = Path.Combine(bundled, "ffprobe.exe");
+        if (MediaToolPaths.RepairSettings(settings))
+        {
+            await store.SaveAsync(settings);
+            StatusText.Text = "Обновлены пути к FFmpeg и FFprobe для текущей папки приложения.";
+        }
         FillSettings(); await RefreshLibrary(); initialized = true; timer.Start();
         if (string.IsNullOrEmpty(settings.PasswordHash)) { ShowPanel("Settings"); StatusText.Text = "Задайте пароль комнаты перед первым запуском."; }
     });
@@ -89,7 +92,8 @@ public partial class MainWindow : Window
             CertificatePath = string.IsNullOrWhiteSpace(CertificateInput.Text) ? null : Path.GetFullPath(CertificateInput.Text.Trim()),
             CertificatePassword = CertificatePasswordInput.Password, MaxParticipants = settings.MaxParticipants
         };
-        await store.SaveAsync(settings); PasswordInput.Clear(); HomeRoomName.Text = settings.RoomName; StatusText.Text = "Настройки сохранены.";
+        MediaToolPaths.RepairSettings(settings);
+        await store.SaveAsync(settings); PasswordInput.Clear(); FillSettings(); StatusText.Text = "Настройки сохранены.";
     }
 
     private async void SaveSettings_Click(object sender, RoutedEventArgs e) => await Guard(SaveSettings);

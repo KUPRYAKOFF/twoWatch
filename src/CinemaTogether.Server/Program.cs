@@ -5,6 +5,7 @@ using CinemaTogether.Server;
 var directory = Environment.GetEnvironmentVariable("CINEMA_DATA_DIR") ?? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "CinemaTogether");
 var store = new SettingsStore(directory);
 var settings = await store.LoadAsync();
+if (MediaToolPaths.RepairSettings(settings)) await store.SaveAsync(settings);
 settings.CertificatePassword = Environment.GetEnvironmentVariable("CINEMA_CERT_PASSWORD");
 var password = Environment.GetEnvironmentVariable("CINEMA_PASSWORD");
 if (!string.IsNullOrEmpty(password)) { settings.PasswordHash = SettingsStore.HashPassword(password); await store.SaveAsync(settings); }
