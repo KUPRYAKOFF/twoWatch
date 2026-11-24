@@ -47,7 +47,8 @@ public static class ServerHost
         builder.Services.AddSingleton(settings);
         builder.Services.AddSingleton<Room>(); builder.Services.AddSingleton<SessionStore>();
         builder.Services.AddSingleton(new MediaLibrary(directory));
-        builder.Services.AddSingleton(_ => new MediaProcessor(settings, directory));
+        builder.Services.AddSingleton(provider => new MediaProcessor(settings, directory,
+            error => provider.GetRequiredService<ILogger<MediaProcessor>>().LogError(error, "Video preparation failed")));
         builder.Services.AddSingleton<RoomCoordinator>();
         builder.Services.AddHostedService<Heartbeat>();
         builder.Services.AddAuthentication("Session").AddScheme<AuthenticationSchemeOptions, SessionAuthentication>("Session", _ => { });

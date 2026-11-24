@@ -256,6 +256,7 @@ public partial class MainWindow : Window
         if (closed) return; e.Cancel = true; if (closing) return; closing = true;
         timer.Stop(); await lifetime.CancelAsync();
         await Guard(async () => { try { if (importTask is not null) await importTask; } catch (OperationCanceledException) { } finally { await StopServer(); } });
-        Browser.Dispose(); lifetime.Dispose(); closed = true; Close();
+        Browser.Dispose(); lifetime.Dispose(); closed = true;
+        Dispatcher.BeginInvoke(Close);
     }
 }

@@ -13,6 +13,12 @@ try {
     Write-Host "PASS: WPF application opened its main window."
     $app.CloseMainWindow() | Out-Null
     if (!$app.WaitForExit(10000)) { throw "Desktop did not close cleanly" }
+} catch {
+    $logs = Join-Path $env:LOCALAPPDATA "CinemaTogether/logs"
+    if (Test-Path $logs) {
+        Get-ChildItem $logs -Filter *.log | ForEach-Object { Get-Content $_.FullName -Tail 30 }
+    }
+    throw
 } finally {
     if (!$app.HasExited) { $app.Kill() }
 }

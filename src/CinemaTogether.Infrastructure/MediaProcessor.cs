@@ -10,11 +10,12 @@ namespace CinemaTogether.Infrastructure;
 
 public sealed record ConversionStatus(string Id, string State, string? Error);
 
-public sealed class MediaProcessor(AppSettings settings, string directory) : IAsyncDisposable
+public sealed class MediaProcessor(AppSettings settings, string directory, Action<Exception>? onError = null) : IAsyncDisposable
 {
     public static readonly string[] Extensions = [".mp4", ".webm", ".mkv", ".avi", ".mov", ".m4v"];
     private readonly ConcurrentDictionary<string, ConversionStatus> jobs = new();
     private readonly ConcurrentDictionary<string, Lazy<Task>> tasks = new();
+    private readonly object queueGate = new();
     private readonly SemaphoreSlim encoderLock = new(1);
     private readonly CancellationTokenSource shutdown = new();
     private readonly string cache = Path.Combine(directory, "cache");
@@ -72,11 +73,14 @@ public sealed class MediaProcessor(AppSettings settings, string directory) : IAs
         Directory.CreateDirectory(cache);
         var info = new FileInfo(item.Path);
         var key = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes($"{item.Id}|{info.Length}|{info.LastWriteTimeUtc.Ticks}|{quality}|{audio}|{settings.HardwareEncoder}")))[..32].ToLowerInvariant();
-        if (!jobs.ContainsKey(key) && jobs.Values.Count(j => j.State is "queued" or "converting") >= 4)
-            throw new InvalidOperationException("Очередь преобразования заполнена. Дождитесь завершения текущих задач.");
-        var status = jobs.GetOrAdd(key, _ => new(key, File.Exists(CachePath(key)) ? "ready" : "queued", null));
-        if (status.State == "queued") _ = tasks.GetOrAdd(key, _ => new Lazy<Task>(() => ConvertAsync(key, item, quality, audio))).Value;
-        return jobs[key];
+        lock (queueGate)
+        {
+            if (!jobs.ContainsKey(key) && jobs.Values.Count(j => j.State is "queued" or "converting") >= 4)
+                throw new InvalidOperationException("Очередь преобразования заполнена. Дождитесь завершения текущих задач.");
+            var status = jobs.GetOrAdd(key, _ => new(key, File.Exists(CachePath(key)) ? "ready" : "queued", null));
+            if (status.State == "queued") _ = tasks.GetOrAdd(key, _ => new Lazy<Task>(() => ConvertAsync(key, item, quality, audio))).Value;
+            return jobs[key];
+        }
     }
 
     public string CachePath(string id) => Path.Combine(cache, id + ".mp4");
@@ -119,7 +123,10 @@ public sealed class MediaProcessor(AppSettings settings, string directory) : IAs
             jobs[key] = new(key, "ready", null);
         }
         catch (Exception ex) when (ex is IOException or OperationCanceledException or System.ComponentModel.Win32Exception)
-        { jobs[key] = new(key, "failed", ex is OperationCanceledException ? "Преобразование отменено." : "FFmpeg не смог подготовить видео. Проверьте путь к программе и свободное место."); }
+        {
+            if (ex is not OperationCanceledException) onError?.Invoke(ex);
+            jobs[key] = new(key, "failed", ex is OperationCanceledException ? "Преобразование отменено." : "FFmpeg не смог подготовить видео. Проверьте путь к программе и свободное место.");
+        }
         finally
         {
             if (acquired) encoderLock.Release();
