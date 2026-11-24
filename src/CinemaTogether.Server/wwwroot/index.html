@@ -1,0 +1,289 @@
+<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="theme-color" content="#111114" />
+    <title>twoWatch — кино вместе</title>
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <link rel="stylesheet" href="/app.css" />
+    <script defer src="/vendor/signalr.min.js"></script>
+    <script defer src="/app.js"></script>
+    <script defer src="/voice.js"></script>
+  </head>
+  <body>
+    <main id="login" class="login-screen">
+      <div class="login-art">
+        <div class="brand">
+          <span class="brand-symbol">◧</span> two<span>Watch</span>
+        </div>
+        <div class="art-copy">
+          <span class="eyebrow">РАССТОЯНИЕ НЕ ВАЖНО</span>
+          <h1>Один фильм.<br />Общий вечер.</h1>
+          <p>
+            Ваш личный кинозал. Смотрите любимое вместе,<br />где бы вы ни
+            находились.
+          </p>
+          <div class="film-strip">
+            <span>▶</span><i></i><i></i><i></i><i></i><i></i>
+          </div>
+        </div>
+        <span class="art-footer">С вашего компьютера — прямо к друзьям</span>
+      </div>
+      <div class="login-panel">
+        <form id="join-form">
+          <span class="eyebrow accent">ХОРОШО, ЧТО ВЫ ЗДЕСЬ</span>
+          <h2>Присоединиться<br />к просмотру</h2>
+          <p class="muted">
+            Введите имя и пароль, который прислал организатор.
+          </p>
+          <label
+            >Ваше имя<input
+              id="name"
+              autocomplete="nickname"
+              maxlength="40"
+              required
+              placeholder="Как к вам обращаться?" /></label
+          ><label
+            >Пароль комнаты<input
+              id="password"
+              type="password"
+              autocomplete="current-password"
+              maxlength="128"
+              required
+              placeholder="Не менее 6 символов"
+          /></label>
+          <p id="login-error" class="error" role="alert"></p>
+          <button id="join-button" class="primary" type="submit">
+            Войти в кинозал <span>→</span>
+          </button>
+          <p class="privacy">◈ Видео передаётся напрямую от организатора</p>
+        </form>
+      </div>
+    </main>
+    <div id="app" class="app" hidden>
+      <aside class="sidebar">
+        <div class="brand">
+          <span class="brand-symbol">◧</span> two<span>Watch</span>
+        </div>
+        <div class="nav-label">ВАШ КИНОЗАЛ</div>
+        <nav>
+          <button data-view="cinema" class="nav active">
+            <span>▣</span>Кинозал</button
+          ><button data-view="library" class="nav">
+            <span>▦</span>Медиатека <small id="library-count">0</small></button
+          ><button data-view="queue" class="nav">
+            <span>☷</span>Очередь <small id="queue-count">0</small></button
+          ><button data-view="history" class="nav">
+            <span>◷</span>История
+          </button>
+        </nav>
+        <div class="sidebar-bottom">
+          <div class="private-note">
+            <span>◈</span><strong>Только свои</strong>
+            <p>Приватная комната.<br />Никакого облачного хранения.</p>
+          </div>
+          <div class="profile">
+            <span class="avatar" id="my-avatar">Я</span>
+            <div>
+              <strong id="my-name"></strong><small id="my-role"></small>
+            </div>
+            <button id="logout" title="Выйти" aria-label="Выйти из комнаты">
+              ↪
+            </button>
+          </div>
+        </div>
+      </aside>
+      <div class="workspace">
+        <header class="topbar">
+          <div>
+            <span class="eyebrow">СМОТРИМ ВМЕСТЕ</span>
+            <h1 id="room-name">Наш кинозал</h1>
+          </div>
+          <div class="top-actions">
+            <span id="connection" class="connection"><i></i>Подключение…</span
+            ><button id="copy-link" class="secondary">↗ Пригласить</button>
+          </div>
+        </header>
+        <div class="room-layout">
+          <main class="main-content">
+            <section id="view-cinema" class="view">
+              <div class="now-heading">
+                <span class="live-dot"></span><span>СЕЙЧАС НА ЭКРАНЕ</span
+                ><span id="sync" class="sync">Ожидание видео</span>
+              </div>
+              <div class="player" id="player">
+                <video id="video" playsinline preload="auto"></video>
+                <div id="player-overlay" class="player-overlay">
+                  <span class="screen-icon">▷</span>
+                  <h2 id="overlay-title">Вечер начинается здесь</h2>
+                  <p id="overlay-text">Организатор скоро выберет фильм</p>
+                  <button id="unlock" class="primary" hidden>
+                    Включить воспроизведение
+                  </button>
+                </div>
+                <div class="player-controls">
+                  <input
+                    id="seek"
+                    type="range"
+                    min="0"
+                    max="1000"
+                    value="0"
+                    aria-label="Позиция воспроизведения"
+                  />
+                  <div class="control-row">
+                    <button
+                      id="play"
+                      title="Воспроизведение / пауза"
+                      aria-label="Воспроизведение / пауза"
+                    >
+                      ▶</button
+                    ><span id="time">0:00 / 0:00</span>
+                    <div class="control-spacer"></div>
+                    <button id="mute" aria-label="Выключить звук">♪</button
+                    ><input
+                      id="volume"
+                      type="range"
+                      min="0"
+                      max="1"
+                      step="0.05"
+                      value="1"
+                      aria-label="Громкость"
+                    /><select id="rate" aria-label="Скорость">
+                      <option value="0.5">0.5×</option>
+                      <option value="1" selected>1×</option>
+                      <option value="1.25">1.25×</option>
+                      <option value="1.5">1.5×</option>
+                      <option value="2">2×</option></select
+                    ><button id="fullscreen" aria-label="Полный экран">
+                      ⛶
+                    </button>
+                  </div>
+                </div>
+              </div>
+              <div class="film-info">
+                <div>
+                  <span class="eyebrow accent">СОВМЕСТНЫЙ ПРОСМОТР</span>
+                  <h2 id="video-title">Выберите историю на сегодня</h2>
+                  <p id="video-meta" class="muted">
+                    Каждый кадр — в один момент с друзьями
+                  </p>
+                </div>
+                <span class="badge">◈ Личная медиатека</span>
+              </div>
+              <div class="video-options">
+                <label
+                  >Качество<select id="quality">
+                    <option value="original">Оригинал</option>
+                    <option value="1080">1080p</option>
+                    <option value="720">720p</option>
+                    <option value="480">480p</option>
+                  </select></label
+                ><label
+                  >Звук<select id="audio">
+                    <option value="">По умолчанию</option>
+                  </select></label
+                ><label
+                  >Субтитры<select id="subtitles">
+                    <option value="">Выключены</option>
+                  </select></label
+                ><span id="control-hint" class="muted"
+                  >Управляет организатор</span
+                >
+              </div>
+              <div class="section-heading">
+                <h3>На вечер</h3>
+                <button data-view="library" class="text-button">
+                  Вся медиатека →
+                </button>
+              </div>
+              <div id="featured" class="media-grid compact"></div>
+            </section>
+            <section id="view-library" class="view" hidden>
+              <div class="section-heading">
+                <div>
+                  <h2>Ваша медиатека</h2>
+                  <p class="muted">Истории, которыми хочется поделиться</p>
+                </div>
+                <button id="refresh-library" class="secondary">
+                  ↻ Обновить
+                </button>
+              </div>
+              <input
+                id="search"
+                class="search"
+                placeholder="Найти фильм…"
+                aria-label="Поиск в медиатеке"
+              />
+              <div id="library" class="media-grid"></div>
+              <p class="muted library-help">
+                Организатор добавляет видео через desktop-приложение.
+              </p>
+            </section>
+            <section id="view-queue" class="view" hidden>
+              <div class="section-heading">
+                <h2>Очередь на вечер</h2>
+                <button id="next" class="primary">Следующее видео →</button>
+              </div>
+              <div id="queue" class="item-list"></div>
+              <p class="muted">
+                Следующее видео запускает организатор. После окончания фильма
+                текущий просмотр останавливается.
+              </p>
+            </section>
+            <section id="view-history" class="view" hidden>
+              <h2>История просмотров</h2>
+              <div id="history" class="item-list"></div>
+            </section>
+          </main>
+          <aside class="social">
+            <div class="social-tabs">
+              <button id="chat-tab" class="selected">Обсуждение</button
+              ><button id="people-tab">
+                Участники <span id="people-count">0</span>
+              </button>
+            </div>
+            <section id="chat-panel" class="chat-panel">
+              <div class="chat-welcome">
+                <span>✳</span><strong>Хорошего просмотра!</strong>
+                <p>Делитесь впечатлениями.<br />Только без спойлеров.</p>
+              </div>
+              <div
+                id="messages"
+                class="messages"
+                role="log"
+                aria-live="polite"
+              ></div>
+              <form id="chat-form">
+                <input
+                  id="message"
+                  maxlength="1000"
+                  placeholder="Написать сообщение…"
+                  aria-label="Сообщение"
+                  required
+                  autocomplete="off"
+                /><button type="submit" aria-label="Отправить сообщение">
+                  ↑
+                </button>
+              </form>
+            </section>
+            <section id="people-panel" class="people-panel" hidden>
+              <div id="people"></div>
+              <p class="muted">
+                Если кто-то загружает видео, просмотр приостановится для всех.
+              </p>
+            </section>
+            <div class="social-footer"><i></i>Синхронизировано сервером</div>
+          </aside>
+        </div>
+      </div>
+    </div>
+    <div id="voice-controls" class="voice-controls" hidden>
+      <button id="voice-join" class="secondary">♬ Голосовой чат</button
+      ><button id="voice-mute" class="secondary" hidden>Микрофон включён</button
+      ><span id="voice-status" class="muted"></span>
+    </div>
+    <div id="voice-audio" hidden></div>
+    <div id="toast" class="toast" role="status" hidden></div>
+  </body>
+</html>

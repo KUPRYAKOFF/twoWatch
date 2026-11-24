@@ -1,0 +1,11 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/CinemaTogether.Core/CinemaTogether.Core.csproj" />
+    <Project Path="src/CinemaTogether.Desktop/CinemaTogether.Desktop.csproj" />
+    <Project Path="src/CinemaTogether.Infrastructure/CinemaTogether.Infrastructure.csproj" />
+    <Project Path="src/CinemaTogether.Server/CinemaTogether.Server.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/CinemaTogether.Tests/CinemaTogether.Tests.csproj" />
+  </Folder>
+</Solution>

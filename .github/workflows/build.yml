@@ -1,0 +1,56 @@
+name: Build and test
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - name: Install FFmpeg
+        run: sudo apt-get update && sudo apt-get install -y ffmpeg
+      - run: npm ci
+      - run: npm run build
+      - name: Check committed browser assets
+        run: git diff --exit-code -- src/CinemaTogether.Server/wwwroot
+      - run: dotnet build CinemaTogether.slnx -c Release
+      - run: dotnet test tests/CinemaTogether.Tests -c Release --no-build --logger trx
+      - run: npx playwright install --with-deps chromium
+      - run: dotnet build src/CinemaTogether.Server
+      - run: npm run test:e2e
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: test-results
+          path: |
+            tests/**/TestResults/**
+            artifacts/e2e/**
+  windows:
+    needs: test
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+      - name: Publish portable Windows application
+        shell: pwsh
+        run: ./scripts/publish.ps1 -IncludeFFmpeg
+      - name: Smoke test WPF startup
+        shell: pwsh
+        run: ./scripts/windows-smoke.ps1
+      - uses: actions/upload-artifact@v4
+        with:
+          name: CinemaTogether-win-x64
+          path: artifacts/CinemaTogether-win-x64.zip
+          retention-days: 30

@@ -1,0 +1,12 @@
+**/bin/
+**/obj/
+**/node_modules/
+artifacts/
+TestResults/
+*.user
+*.suo
+.vs/
+.idea/
+data/
+*.pfx
+*.log

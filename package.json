@@ -1,0 +1,16 @@
+{
+  "name": "cinema-together-client",
+  "private": true,
+  "version": "1.0.0",
+  "scripts": {
+    "build": "sass --no-source-map src/CinemaTogether.Server/Styles/app.scss src/CinemaTogether.Server/wwwroot/app.css && node scripts/vendor.mjs",
+    "test:e2e": "node scripts/e2e.mjs"
+  },
+  "dependencies": {
+    "@microsoft/signalr": "10.0.0"
+  },
+  "devDependencies": {
+    "sass": "1.94.2",
+    "playwright": "1.56.1"
+  }
+}
